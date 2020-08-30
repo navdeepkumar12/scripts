@@ -4,11 +4,16 @@ import tools as tl
 from scipy import signal as sg
 import builtins
 import logging as log
-log.basicConfig(level=log.INFO)
+log.basicConfig(level=log.WARNING)
 
 class default:
     opt = 'adam'
+    param = 'he'
+    param_scale = 1
+    noise_scale= 0.1
 
+def test():
+    print(default.param_scale)
 class pad:
     def dim(m,mode):
         if mode == 'full':
@@ -68,6 +73,7 @@ class optimizer():
         self.delta = []
         self.beta1t = 1
         self.beta2t = 1
+        self.name = self.__class__.__name__
 
 class vanila(optimizer):
     # Vanila gradient descent, just update by given gradient
@@ -132,30 +138,30 @@ class param():
     def __init__(self):
         self.shape = None
         self.w =  []
-        self.name = 'param'
+        self.name = self.__class__.__name__
 
 class ones(param):
     def forward(self,shape):
         self.shape = shape    
-        self.w = np.ones(self.shape)
+        self.w = np.ones(self.shape)*default.param_scale
         return self.w
 
 class zeros(param):
     def forward(self,shape):
         self.shape = shape
-        self.w = np.zeros(self.shape)  
+        self.w = np.zeros(self.shape)*default.param_scale
         return self.w
 
 class uniform(param):
     def forward(self,shape):
         self.shape = shape
-        self.w = np.random.random(self.shape)
+        self.w = np.random.random(self.shape)*default.param_scale
         return self.w
 
 class normal(param):
     def forward(self,shape):
         self.shape = shape
-        self.w = eval('np.random.randn'+ str(self.shape))
+        self.w = eval('np.random.randn'+ str(self.shape))*default.param_scale
         return self.w
 
 class he(param):
@@ -163,44 +169,68 @@ class he(param):
         self.shape = shape 
         #self.scale = np.sqrt(self.shape[0]+np.prod(self.shape[1:]))   # for lin and conv2d, conv3d, ?for conv1d, add1
         self.scale = np.sqrt(np.prod(self.shape))
-        self.w = eval('np.random.randn'+ str(self.shape))/self.scale
+        self.w = eval('np.random.randn'+ str(self.shape))/(self.scale*default.param_scale)
         print('nn:param:he:- param initilized HE random normal')
         return self.w
 
 
 class layer():
-
-    def __init__(self, name='layer', shape=None, opt=None, param = 'he', trainable = True):
-        self.name, self.shape, self.trainable = name, shape, trainable
+    def __init__(self, name='layer', shape=None, opt=None, param = None, trainable = True, with_param=True):
+        self.name, self.shape, self.trainable, self.param, self.with_param = name, shape, trainable, param, with_param
         self.x, self.y, self.dy, self.dx , self.dw, self.delta = np.repeat(None,6)
+        self.name = self.__class__.__name__
         self.w = np.array([0])
         self.default = {} # To know if arguments are by default value
         self.set_opt(opt)
-        # Set param and sanity check
-        if type(param) ==str:  #  param init is inputed
-            self.param = eval(param+'()')
-            if shape != None:  # Dosn't init weights of Relu, cre , etc
-                self.init_param()
-        if type(param) in {list, np.ndarray}: # set param and sanity check
-            if self.shape == None or self.shape == param.shape:
-                self.set_param(param)         
-            else: tl.cprint('layer:init:- layer shape ={} not matched with param shape {}'.format(self.shape,param.shape))
-    
-    def set_opt(self,opt):
+        self.set_param(self.param)
+        
+    def set_opt(self,opt=None):
         if opt == None: opt,self.default['opt'] = default.opt, True  
         if type(opt) == str: self.opt = eval(opt+'()')
         else: self.opt = opt
     
-    def set_param(self, w):
-        self.w = np.array(w)
-        self.shape = self.w.shape
+    def set_param(self, param=None, force=False):
+        self.param, self.force = param, force
+        if not self.with_param: 
+            log.debug('{}\set_param:> with_param ={}, exited'.format(self.name,self.with_param))
+            return # layers with no param, do nothing
+        if self.param == None: self.param, self.default['param']= default.param, True # param is set by default (if True)
+        if type(self.param) == str and self.shape != None:   # string initilization
+            try:
+                self.param = eval(self.param + '()')
+                self.w = self.param.forward(self.shape)
+                log.debug('{}\set_param:>  WEIGHT SET.  param {}, self.shape ={}'.format(self.name,self.param,self.shape))
+            except:
+                log.critical('{} :set_param:> param input ={}, param  type ={},shape ={}.\
+                     is not acceptable string for param iniitiazation or shape is not acceptable \
+                         '.format(self.name, param, type(param), self.shape)) 
+        elif type(self.param) in {list,np.ndarray}: # setting weight numerically
+            self.param = np.array(param)
+            if self.shape == None or self.shape == self.param.shape or self.force: # Set param by force(true),or compatible paramith previous       
+                                                                              # declared shape and param shape.
+                self.w = self.param  
+                self.shape = self.w.shape
+                self.param = 'custom'
+                log.info('{}\set_param:>  Custum Weight Set. Force ={}'.format(self.name, self.force))
+            else:
+                log.critical('{}: WEIGHT NOT SET. input param type ={},input param shape ={}, declared param shape {}, force {}\
+                        is not list/ndarray nor acceptable string for param\
+                        iniitiazation'.format(self.name, type(param), self.param.shape, self.shape, self.force))       
+        else: 
+            try: 
+                self.w = self.param.forward(self.shape)
+                log.warning('{}\set_param:> WEIGHT SET BY CLASS INSTANCE {}. Other layers may share param\
+                    '.format(self.name, self.param.name))
+            except:
+                log.critical('{}:set_param:> WEIGHT NOT SET. param ={}, shape={}'.format(self.name, self.param, self.shape))
+
             
-    def init_param(self, shape = None, param=None): 
-        if param != None:   # changing __init__ param init
-            self.param = eval(param+'()')   
-        if shape != None: # changing __init__ param shape
-            self.shape = shape    
-        self.w = self.param.forward(self.shape)
+    # def init_param(self, shape = None, param=None): 
+    #     if param != None:   # changing __init__ param init
+    #         self.param = eval(param+'()')   
+    #     if shape != None: # changing __init__ param shape
+    #         self.shape = shape    
+    #     self.w = self.param.forward(self.shape)
     
     def forward(self,x):
         pass
@@ -211,7 +241,7 @@ class layer():
     def update(self):
         if self.trainable:
             self.delta = self.opt.forward(self.dw)
-            self.w = self.w - self.delta
+            self.w = self.w - self.delta + eval('np.random.randn{}'.format(self.shape))*default.noise_scale/np.prod(self.shape)
     
     def unbias(self):
         self.mean = np.mean(self.w)
@@ -231,8 +261,8 @@ class layer():
     #     self.w = np.clip(self.w, self.min, self.max)    
 
 class linear(layer):
-    def __init__(self,shape=None, opt=None):
-        super().__init__(name=self.__class__.__name__, opt=opt,shape=shape)
+    def __init__(self, shape=None, opt=None, param=None):
+        super().__init__(opt=opt, shape=shape, param=param)
     def forward(self,x):
         self.x = x.copy()
         self.input_shape = x.shape
@@ -254,7 +284,7 @@ class linear(layer):
  
 class relu(layer):
     def __init__(self):
-        super().__init__(trainable=False,name= self.__class__.__name__)
+        super().__init__(trainable=False, with_param=False)
         
     def forward(self,x):
         self.x = x.copy()
@@ -285,7 +315,7 @@ class loss():
 
 class mse(loss):
     def __init__(self):
-        super().__init__(name= self.__class__.__name__)
+        super().__init__()
     
     def forward(self,x, label):
         self.label = label.copy()  
@@ -300,7 +330,7 @@ class mse(loss):
 
 class cre(loss):
     def __init__(self):
-        super().__init__(name= self.__class__.__name__)
+        super().__init__()
         
     def forward(self,x, label):
         self.label = label.copy()  
@@ -319,7 +349,7 @@ class cre(loss):
 
 class softmax(layer):
     def __init__(self):
-        super().__init__(trainable=False,name= self.__class__.__name__)
+        super().__init__(trainable=False, with_param=False)
     
     def forward(self,x):
         self.x = x.copy()
@@ -338,7 +368,7 @@ class softmax(layer):
 
 class sigmoid(layer):
     def __init__(self):
-        super().__init__(trainable=False, name= self.__class__.__name__)
+        super().__init__(trainable=False, with_param=False)
     
     def forward(self, x):
         self.x = x.copy()
@@ -351,8 +381,8 @@ class sigmoid(layer):
         return self.dx
 
 class add(layer):
-    def __init__(self, opt=None):
-        super().__init__(name= self.__class__.__name__, opt=opt)
+    def __init__(self, shape=None, opt=None, param=None):
+        super().__init__(shape=shape, opt=opt, param=param)
         self.w = 0
     def forward(self,x):
         self.x = x.copy()
@@ -367,7 +397,7 @@ class add(layer):
 
 class hadamard(layer):
     def __init__(self):
-        super().__init__(name= self.__class__.__name__)    
+        super().__init__()    
     def forward(self,x):
         self.x = x.copy()
         self.y = self.x*self.w      
@@ -381,9 +411,9 @@ class hadamard(layer):
 
         
 class convolve(layer):
-    def __init__(self,mode='valid', shape=None, opt=None):
+    def __init__(self, shape=None, param=None, opt=None, mode='valid'):
         self.mode = mode
-        super().__init__(name= self.__class__.__name__, opt=opt,shape=shape)  
+        super().__init__(opt=opt,shape=shape, param=param)  
     def forward(self,x):
         self.x = x.copy()
         self.m = self.shape
@@ -400,8 +430,9 @@ class convolve(layer):
 
     
 class convolve2d(layer): 
-    def __init__(self,mode='valid',shape=None, opt=None):
-        super().__init__(name= self.__class__.__name__,opt=opt,shape=shape) 
+    def __init__(self,shape=None, param=None, opt=None, mode='valid'):
+        self.mode = mode
+        super().__init__(opt=opt,shape=shape, param=param) 
     def forward(self,x):
         self.x = x.copy()
         self.k, self.m, self.n = self.shape # k filter, (m,n) filter shape
@@ -421,8 +452,9 @@ class convolve2d(layer):
 
 
 class convolve3d(layer): 
-    def __init__(self,mode = 'valid',shape=None, opt=None):
-        super().__init__(name= self.__class__.__name__,opt=opt,shape=shape)         
+    def __init__(self,shape=None, param=None, opt=None,mode = 'valid'):
+        super().__init__(opt=opt,shape=shape, param=param)      
+        self.mode = mode   
     def forward(self,x):
         self.x = x.copy()
         #(k,l,m,n) k filter, l input dim, (m,n)filter shape
@@ -444,10 +476,13 @@ class convolve3d(layer):
     
  
 class sequential():
-    def __init__(self,layers = [], loss = cre(),opt=None,opt_force=False):
-        self.n, self.layers, self.loss, self.opt, self.opt_force = len(layers), layers, loss, opt, opt_force
+    def __init__(self,layers = [], loss = cre(),opt=None,opt_force=False,param=None, param_force =False):
+        self.n, self.layers, self.opt, self.opt_force = len(layers), layers, opt, opt_force
+        self.param , self.param_force = param, param_force
+        self.set_loss(loss)
         self.set_opt(opt)
-        self.name = ['SEQUENTIAL: ']+ [layer.name for layer in self.layers] + ['loss= {}'.format(loss.name)]
+        self.init_param(param=self.param,force=self.param_force)
+        self.name = ['SEQUENTIAL: ']+ [layer.name for layer in self.layers] + ['loss= {}'.format(self.loss.name)]
         
     def forward(self,x):
         self.x = x.copy()
@@ -467,6 +502,10 @@ class sequential():
         for layer in self.layers:
             layer.update()
     
+    def set_loss(self, loss):
+        if type(loss) == str: self.loss = eval(loss + '()')
+        else: self.loss = loss
+
     def set_opt(self,opt =None, force=False):
         self.opt, self.opt_force = opt, force
         if opt == None: return 
@@ -481,6 +520,20 @@ class sequential():
                     if layer.default['opt'] == True: layer.set_opt(self.opt)
                 except:
                     pass
+    def init_param(self,param =None, force=False):
+        self.param, self.param_force = param, force
+        if param == None: return 
+        if type(param) !=str: log.warning('default.param = {} should be string not {}, otherwise all\
+            layer would share same param class'.format(param, type(param)))
+        if self.param_force:  # forcefully set all layers to param
+            for layer in self.layers:
+                layer.set_param(self.param)    
+        else:        # ensure default param from here and finetuning in layer
+            for layer in self.layers:
+                try:
+                    if layer.default['param'] == True: layer.set_param(self.param)
+                except:
+                    pass
    
     def fit(self,x,y):
         x = self.forward(x)
@@ -490,15 +543,17 @@ class sequential():
         self.update()
         return loss
 
-    def Fit(self,X,Y): 
-        for x,y in zip(X,Y):
-            self.fit(x,y)
+    def Fit(self,X,Y,epochs=1): 
+        self.epochs = epochs
+        for i in range(self.epochs):
+            for x,y in zip(X,Y):
+                self.fit(x,y)
     # def iter(self,command='name'):
     #     return [eval(str(layer)+'.' + str(command)) for layer in self.layers]
 
-    def set_weights(self,W):
-        for layer, w in zip(self.layers,W):
-            layer.set_param(w)
+    def set_weights(self,W, force=False):
+        for layer, w in zip(self.layers,W): #force(True) set weights forcefully regardless of layer shape
+            layer.set_param(w,force)
 
     def get_weights(self):
         self.w = [layer.w for layer in self.layers]
