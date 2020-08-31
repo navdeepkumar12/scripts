@@ -173,6 +173,73 @@ class he(param):
         print('nn:param:he:- param initilized HE random normal')
         return self.w
 
+class loss():
+    def __init__(self,name=None):
+        self.name = self.__class__.__name__
+        self.x, self.y, self.dy, self.dx , self.dw, self.delta = np.repeat(None,6)
+        self.w = np.array([0])
+        self.Y = [] # list of previous loss
+    def forward(self,x):
+        pass
+    def backward(self,dy):
+        pass
+    def update(self):
+        pass
+    def loss(self,x,label):
+        return self.forward(x,label), self.backward()
+
+class mse(loss):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self,x, label):
+        self.label = label.copy()  
+        self.x = x.copy()
+        self.y = np.sum((self.x - self.label)*(self.x - self.label))/2
+        self.Y.append(self.y)
+        return self.y
+
+    def backward(self):
+        self.dx = self.x - self.label         
+        return self.dx   
+
+class cre(loss):
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self,x, label):
+        self.label = label.copy()  
+        self.x = x.copy()
+        self.label_entropy = -np.log2(self.label+0.0001)*self.label    #0.0001 is added to avoid log(0)
+        self.x_entropy = -np.log2(self.x+0.0001)*self.label
+        self.y = self.x_entropy  - self.label_entropy
+        self.y = np.sum(self.y)   #KL divergence
+        self.Y.append(self.y)
+        return self.y
+    
+    def backward(self) :   
+        self.dx = -self.label*(1/(self.x+0.0001))       # 0.0001 is added to avoid insanely large value of 1/x     
+        return self.dx   
+
+
+class  acc():
+    def __init__(self):
+        self.Y = []
+    def forward(self):
+        pass
+    def init():
+        self.Y = []
+    
+class one_hot(acc):    
+    def forward(self,x,label,):
+        self.x, self.label = x, label   
+        if type(self.label) == int:
+            self.y = np.argmax(self.x) == int(self.label)   
+        elif type(self.label) in {list,np.ndarray}:
+            self.y = np.argmax(self.label) == np.argmax(self.x) 
+        self.Y.append(self.y)
+        return self.y 
+           
 
 class layer():
     def __init__(self, name='layer', shape=None, opt=None, param = None, trainable = True, with_param=True):
@@ -297,54 +364,6 @@ class relu(layer):
         return self.dx
     
 
-class loss():
-    def __init__(self,name=None):
-        self.name = self.__class__.__name__
-        self.x, self.y, self.dy, self.dx , self.dw, self.delta = np.repeat(None,6)
-        self.w = np.array([0])
-        self.Y = [] # list of previous loss
-    def forward(self,x):
-        pass
-    def backward(self,dy):
-        pass
-    def update(self):
-        pass
-    def loss(self,x,label):
-        return self.forward(x,label), self.backward()
-    
-
-class mse(loss):
-    def __init__(self):
-        super().__init__()
-    
-    def forward(self,x, label):
-        self.label = label.copy()  
-        self.x = x.copy()
-        self.y = np.sum((self.x - self.label)*(self.x - self.label))/2
-        self.Y.append(self.y)
-        return self.y
-
-    def backward(self):
-        self.dx = self.x - self.label         
-        return self.dx   
-
-class cre(loss):
-    def __init__(self):
-        super().__init__()
-        
-    def forward(self,x, label):
-        self.label = label.copy()  
-        self.x = x.copy()
-        self.label_entropy = -np.log2(self.label+0.0001)*self.label    #0.0001 is added to avoid log(0)
-        self.x_entropy = -np.log2(self.x+0.0001)*self.label
-        self.y = self.x_entropy  - self.label_entropy
-        self.y = np.sum(self.y)   #KL divergence
-        self.Y.append(self.y)
-        return self.y
-    
-    def backward(self) :   
-        self.dx = -self.label*(1/(self.x+0.0001))       # 0.0001 is added to avoid insanely large value of 1/x     
-        return self.dx   
 
 
 class softmax(layer):
@@ -476,11 +495,12 @@ class convolve3d(layer):
     
  
 class sequential():
-    def __init__(self,layers = [], loss = cre(),opt=None,opt_force=False,param=None, param_force =False):
+    def __init__(self,layers = [], loss = cre(),opt=None,opt_force=False,param=None, param_force =False,acc=None):
         self.n, self.layers, self.opt, self.opt_force = len(layers), layers, opt, opt_force
         self.param , self.param_force = param, param_force
         self.set_loss(loss)
         self.set_opt(opt)
+        self.set_acc(acc)
         self.init_param(param=self.param,force=self.param_force)
         self.name = ['SEQUENTIAL: ']+ [layer.name for layer in self.layers] + ['loss= {}'.format(self.loss.name)]
         
@@ -501,7 +521,22 @@ class sequential():
     def update(self):
         for layer in self.layers:
             layer.update()
-    
+
+    def set_acc(self,acc): 
+        if acc == None: return
+        if type(acc)==str:
+            try:
+                self.acc = eval(acc+'()')
+                log.info('accuracy metric is {}'.format(self.acc))
+            except:
+                log.warning('ACCURACY METRIC IS NOT SET. input: {}'.format(acc))    
+        else:
+            try:
+                self.acc = acc
+                log.info('accuracy metric is {}'.format(self.acc))
+            except:
+                log.warning('ACCURACY METRIC IS NOT SET. input: {}'.format(acc))   
+
     def set_loss(self, loss):
         if type(loss) == str: self.loss = eval(loss + '()')
         else: self.loss = loss
@@ -541,13 +576,17 @@ class sequential():
         dx = self.loss.backward()
         dx = self.backward(dx)
         self.update()
+        if self.acc != None: temp = self.acc.forward(x,y)
         return loss
 
-    def Fit(self,X,Y,epochs=1): 
-        self.epochs = epochs
+    def Fit(self,X,Y,epochs=1,max_iterations=-1): 
+        self.epochs,self.iterations,self.max_iterations = epochs,0,max_iterations
         for i in range(self.epochs):
             for x,y in zip(X,Y):
                 self.fit(x,y)
+                self.iterations +=1
+                if self.iterations > self.max_iterations  and self.max_iterations > 0: return 
+                # epochs iterations if max_iterations <0
     # def iter(self,command='name'):
     #     return [eval(str(layer)+'.' + str(command)) for layer in self.layers]
 
