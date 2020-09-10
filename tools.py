@@ -7,6 +7,29 @@ import time
 import matplotlib.pyplot as plt
 import os
 
+def check(command):
+    try:
+        dummy = eval(command)
+        return True
+    except:
+        return False    
+
+def norm(A):
+    norm  = [np.sum(a*a) for a in A]
+    return np.sqrt(np.sum(norm)), norm 
+class progress():
+    def __init__(self,max,intervals=100):
+        self.max = max
+        self.intervals = intervals
+        self.progress = 0
+        self.iteration = 0
+    def forward(self,increment=1):   
+        self.iteration += increment
+        self.temp = int(self.iteration*self.intervals/self.max)
+        if self.temp > self.progress:
+            self.progress = self.temp
+            fprint('Progress {}/{}'.format(self.progress,self.intervals))
+
 def cprint(txt, color = 'red'):
     if color == 'red':
         print('\033[91m'+'{}'.format(txt)+'\033[0m')

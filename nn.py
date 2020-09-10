@@ -3,6 +3,7 @@ import pm
 import tools as tl 
 from scipy import signal as sg
 import builtins
+from functools import reduce
 import logging as log
 log.basicConfig(level=log.WARNING)
 
@@ -11,9 +12,8 @@ class default:
     param = 'he'
     param_scale = 1
     noise_scale= 0.1
+    eta, beta1,beta2,epsilon =0.001,0.9,0.999,10**(-8)
 
-def test():
-    print(default.param_scale)
 class pad:
     def dim(m,mode):
         if mode == 'full':
@@ -61,7 +61,7 @@ class pad:
         return x    
         
 class optimizer():
-    def __init__(self, eta=0.001,beta1 = 0.9, beta2 = 0.999,epsilon=10**(-8)):
+    def __init__(self, eta=default.eta, beta1=default.beta1, beta2=default.beta2, epsilon=default.epsilon):
         self.eta = eta
         self.beta1 = beta1
         self.beta2 = beta2
@@ -143,7 +143,8 @@ class param():
 class ones(param):
     def forward(self,shape):
         self.shape = shape    
-        self.w = np.ones(self.shape)*default.param_scale
+        self.scale = np.sqrt(np.prod(self.shape))
+        self.w = np.ones(self.shape)*default.param_scale/self.scale
         return self.w
 
 class zeros(param):
@@ -169,7 +170,7 @@ class he(param):
         self.shape = shape 
         #self.scale = np.sqrt(self.shape[0]+np.prod(self.shape[1:]))   # for lin and conv2d, conv3d, ?for conv1d, add1
         self.scale = np.sqrt(np.prod(self.shape))
-        self.w = eval('np.random.randn'+ str(self.shape))/(self.scale*default.param_scale)
+        self.w = eval('np.random.randn'+ str(self.shape))*default.param_scale/(self.scale)
         print('nn:param:he:- param initilized HE random normal')
         return self.w
 
@@ -224,6 +225,7 @@ class cre(loss):
 
 class  acc():
     def __init__(self):
+        self.y = None
         self.Y = []
     def forward(self):
         pass
@@ -306,9 +308,9 @@ class layer():
         pass
    
     def update(self):
-        if self.trainable:
+        if self.with_param and self.trainable:
             self.delta = self.opt.forward(self.dw)
-            self.w = self.w - self.delta + eval('np.random.randn{}'.format(self.shape))*default.noise_scale/np.prod(self.shape)
+            self.w = self.w - self.delta #+ eval('np.random.randn{}'.format(self.shape))*default.noise_scale/np.prod(self.shape)
     
     def unbias(self):
         self.mean = np.mean(self.w)
@@ -491,7 +493,30 @@ class convolve3d(layer):
         self.dx = np.array([pad.unpad2d(dX1, (self.m, self.n), self.mode) for dX1 in self.dX1])   #dim(l,m,n)
         return self.dx
    
+class pool:
+    class stride(layer):
+        def __init__(self,shape=None, opt=None):
+            super().__init__(shape=shape,trainable=False,with_param=False)
+            if type(shape)!=tuple and  type(shape)!=int :
+                 log.warning('pool.stride shape should  be tuple/int not {}. Also make sure len(shape)= dim(input)'.format(shape))
+            if type(shape) in {list,tuple} and len(shape) > 1:
+                self.command = '[::'+ reduce(lambda a,b: str(a)+',::'+str(b),self.shape) +']'
+            if type(shape)==int or tl.check('int(shape)'):
+                self.shape = int(shape)
+                self.command = '[::self.shape]'   
+        def forward(self,x):
+            self.x = x.copy()
+            self.y = eval('self.x'+self.command)
+        def backward(self,dy):
+            self.dy = dy.copy()
+            self.dx = np.zeros(np.array(self.x).shape)
+            exec('self.dx'+self.command +'=self.dy')
 
+    class average(layer):
+        pass        
+
+        
+    
     
  
 class sequential():
@@ -591,14 +616,14 @@ class sequential():
     #     return [eval(str(layer)+'.' + str(command)) for layer in self.layers]
 
     def set_weights(self,W, force=False):
-        for layer, w in zip(self.layers,W): #force(True) set weights forcefully regardless of layer shape
+        for layer, w in zip(filter(lambda x: x.with_param, self.layers),W): #force(True) set weights forcefully regardless of layer shape
             layer.set_param(w,force)
 
     def get_weights(self):
-        self.w = [layer.w for layer in self.layers]
+        self.w = [layer.w for layer in filter(lambda x: x.with_param, self.layers)]
         return self.w
     
-    def get_activation(self):
+    def get_activations(self):
         self.act = [layer.y for layer in self.layers]
         return self.act
    
