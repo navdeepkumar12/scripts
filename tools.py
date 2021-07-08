@@ -6,33 +6,54 @@ import datetime
 import time
 import matplotlib.pyplot as plt
 import os
-import mdptoolbox
+try:
+    import mdptoolbox
+except:
+    print('Warninig: mdptoolbox not imported')
 
+# Whittle index policy simulator
+class whittle:
+    def sim(pm,W):
+        T = []
+        X = np.zeros(pm.N,int)
+        for i in range(10000):
+            T.append(list(X))
+            Nu = [W[x] for x in X] # whittle index of arms
+            U = np.zeros(pm.N,int) #  action
+            active = np.argsort(Nu)[-pm.M:]
+            U[active] = 1
+            for i,x,u in zip(pm.S,X,U):
+                X[i] = np.random.choice(pm.S,p = pm.P[u][x])
+                
+        T = list(np.reshape(T,-1))
+        d = np.array([T.count(i) for i in pm.S])/len(T)
+        return d
+    
 
-def support_whittle(pm,r1,r2,d):
-    Pi = []
-    for l in np.arange(r1 ,r2,d):
-        rvi = mdptoolbox.mdp.RelativeValueIteration(pm.P,pm.R+pm.mu*pm.D -l*pm.A)
-        rvi.run()
-        pi = rvi.policy # policy
-        Pi.append(pi)
-    return Pi
+    def support_whittle(pm,r1,r2,d):
+        Pi = []
+        for l in np.arange(r1 ,r2,d):
+            rvi = mdptoolbox.mdp.RelativeValueIteration(pm.P,pm.R+pm.mu*pm.D -l*pm.A)
+            rvi.run()
+            pi = rvi.policy # policy
+            Pi.append(pi)
+        return Pi
 
-def whittle(pm,acc=0.01):
-    r = int(np.max(np.abs(pm.R))) + 1 # range
-    r1,r2 = -r,r
-    d= 2 # difference
-    flag = False
-    while not flag:
-        d = d/2
-        Pi = support_whittle(pm,r1,r2,d)
-        c = np.sum(Pi,axis=0) 
-        flag = (len(c) == len(set(c))) or (d < acc)
-        if np.mean(Pi[0]) < 1: r1 = 2*r1
-        if np.mean(Pi[-1])> 0: r2 = 2*r2
-        print(r1,r1,d,len(c),len(set(c)),np.mean(Pi[0]),np.mean(Pi[-1]),c)
-    w = c*d + r1
-    return w
+    def index(pm,acc=0.01):
+        r = int(np.max(np.abs(pm.R))) + 1 # range
+        r1,r2 = -r,r
+        d= 2 # difference
+        flag = False
+        while not flag:
+            d = d/2
+            Pi = support_whittle(pm,r1,r2,d)
+            c = np.sum(Pi,axis=0) 
+            flag = (len(c) == len(set(c))) or (d < acc)
+            if np.mean(Pi[0]) < 1: r1 = 2*r1
+            if np.mean(Pi[-1])> 0: r2 = 2*r2
+            print(r1,r1,d,len(c),len(set(c)),np.mean(Pi[0]),np.mean(Pi[-1]),c)
+        w = c*d + r1
+        return w
     
 
 def MakeStochatic(P):
