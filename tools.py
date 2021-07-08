@@ -12,7 +12,7 @@ import mdptoolbox
 def support_whittle(pm,r1,r2,d):
     Pi = []
     for l in np.arange(r1 ,r2,d):
-        rvi = mdptoolbox.mdp.RelativeValueIteration(pm.P,pm.R +l*pm.A)
+        rvi = mdptoolbox.mdp.RelativeValueIteration(pm.P,pm.R+pm.mu*pm.D -l*pm.A)
         rvi.run()
         pi = rvi.policy # policy
         Pi.append(pi)
@@ -31,7 +31,7 @@ def whittle(pm,acc=0.01):
         if np.mean(Pi[0]) < 1: r1 = 2*r1
         if np.mean(Pi[-1])> 0: r2 = 2*r2
         print(r1,r1,d,len(c),len(set(c)),np.mean(Pi[0]),np.mean(Pi[-1]),c)
-    w = np.mean(Pi,axis=0) + r1
+    w = c*d + r1
     return w
     
 
