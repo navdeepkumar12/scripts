@@ -39,19 +39,19 @@ class whittle:
             Pi.append(pi)
         return Pi
 
-    def index(pm,acc=0.01):
+    def index(pm,acc=0.01, verbose=False):
         r = int(np.max(np.abs(pm.R))) + 1 # range
         r1,r2 = -r,r
         d= 2 # difference
         flag = False
         while not flag:
             d = d/2
-            Pi = support_whittle(pm,r1,r2,d)
+            Pi = whittle.support_whittle(pm,r1,r2,d)
             c = np.sum(Pi,axis=0) 
             flag = (len(c) == len(set(c))) or (d < acc)
             if np.mean(Pi[0]) < 1: r1 = 2*r1
             if np.mean(Pi[-1])> 0: r2 = 2*r2
-            print(r1,r1,d,len(c),len(set(c)),np.mean(Pi[0]),np.mean(Pi[-1]),c)
+            if verbose: print(r1,r1,d,len(c),len(set(c)),np.mean(Pi[0]),np.mean(Pi[-1]),c)
         w = c*d + r1
         return w
     
