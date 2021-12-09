@@ -62,6 +62,20 @@ def MakeStochatic(P):
     return np.array([p/s for p,s in zip(P,S)])
 
 
+def stationaryDist(A):
+    s = np.ones(n)/n
+    S = []
+    for i in range(100):
+        s = s@A
+        S.append(s)
+    return np.mean(S, axis=0)
+def norm1(v):
+    return np.sum(np.abs(v))
+def norm2(v):
+    return np.sqrt(np.sum(v*v))
+def cos(u,v):
+    t = np.sum(u*v)
+    return t/(norm2(u)*norm2(v))
 def check(command):
     try:
         dummy = eval(command)
